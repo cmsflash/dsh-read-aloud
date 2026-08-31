@@ -1,0 +1,26 @@
+# One installable bundle row mounts the tts seam, its routes, the turn-end
+# cache, and the Web play control.
+#
+# `model`, `voice`, and `provider` move together: a `minimax/*` model resolves
+# only through a gateway route, so pinning the provider is correctness rather
+# than tie-breaking. Serving OpenAI instead means setting all three.
+#
+# Billing is by input characters, so `bitrate` trades stored bytes against
+# audio quality and nothing else; MiniMax honors it and OpenAI ignores it.
+- insert:
+    - id: read-aloud
+      name: '@dsh-external/dsh-read-aloud'
+      config:
+        provider: litellm
+        model: minimax/speech-2.6-hd
+        voice: alloy
+        bitrate: 64000
+        maxChars: 10000
+        providers:
+          litellm:
+            apiKeyEnv: LITELLM_API_KEY
+            baseURLEnv: LITELLM_BASE_URL
+          openai:
+            apiKeyEnv: OPENAI_API_KEY
+        ttlDays: 7
+        synthesizeOnTurnEnd: true
