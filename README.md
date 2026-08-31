@@ -4,11 +4,21 @@ Read-aloud of assistant replies for [DeepSeek Harness](https://github.com/deepse
 
 ## Install
 
+Not published to npm. Install from GitHub:
+
 ```sh
-dsh plugin --profile web add @dsh-external/dsh-read-aloud
+dsh plugin --profile web add github:cmsflash/dsh-read-aloud
+```
+
+Or link a local checkout, which serves `lib/` directly:
+
+```sh
+dsh plugin --profile web add link:/path/to/dsh-read-aloud
 ```
 
 Restart the profile afterwards; host plugins mount at boot.
+
+Either route needs `@deepseek-ai/cordis` and `@deepseek-ai/schemastery` resolvable from the plugin directory — Node resolves the host bundle's external imports relative to the plugin, not the profile. A local checkout gets them by symlink (see [Development](#development)).
 
 ## What it mounts
 

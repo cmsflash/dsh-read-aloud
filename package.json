@@ -1,6 +1,7 @@
 {
   "name": "@dsh-external/dsh-read-aloud",
   "version": "0.1.0",
+  "private": true,
   "description": "Read-aloud of assistant replies for DeepSeek Harness: a text-to-speech seam, an OpenAI-compatible provider, a turn-end audio cache, and the Web play control",
   "type": "module",
   "main": "./lib/index.js",
