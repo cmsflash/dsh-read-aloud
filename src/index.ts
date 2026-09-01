@@ -105,14 +105,23 @@ export function apply(ctx: Context, config: Config): void {
     ...config.provider === undefined ? {} : { provider: config.provider },
   })
 
-  ctx.inject(['tts'], (tts: Context) => {
+  ctx.inject(['tts'], async (tts: Context) => {
+    // The managed credential store is the Harness's own plane and holds keys a
+    // launched process never carries in its environment; the environment is the
+    // fallback for a deployment that exports them instead.
+    const credentials = tts.get('credentials') as
+      | { resolve(ref: string): Promise<{ value?: string } | undefined> }
+      | undefined
+    const secret = async (ref: string | undefined): Promise<string | undefined> => {
+      if (ref === undefined) return undefined
+      const stored = credentials === undefined ? undefined : (await credentials.resolve(ref))?.value
+      return stored ?? process.env[ref]
+    }
     for (const [id, route] of Object.entries(config.providers)) {
-      const keyFromEnv = route.apiKeyEnv === undefined ? undefined : process.env[route.apiKeyEnv]
-      const baseFromEnv = route.baseURLEnv === undefined ? undefined : process.env[route.baseURLEnv]
       tts.tts.registerProvider(new OpenAiTtsProvider({
         id,
-        apiKey: route.apiKey ?? keyFromEnv ?? '',
-        baseURL: route.baseURL ?? baseFromEnv ?? OPENAI_DEFAULT_BASE_URL,
+        apiKey: route.apiKey ?? await secret(route.apiKeyEnv) ?? '',
+        baseURL: route.baseURL ?? await secret(route.baseURLEnv) ?? OPENAI_DEFAULT_BASE_URL,
         timeoutMs: route.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       }))
     }
