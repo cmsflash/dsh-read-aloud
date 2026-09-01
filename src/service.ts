@@ -18,6 +18,7 @@ import { join } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import { ReadAloudStore } from './store.ts'
 import { closingMessageOf, spokenTextOf } from './text.ts'
+import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 import type { SpeechAudioRequest, SpeechAudioResult, SpeechAudioValue } from './cache-types.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -91,15 +92,38 @@ export class ReadAloudService extends Service {
   async audio(request: SpeechAudioRequest): Promise<SpeechAudioResult> {
     const cached = await this.store.read(request.messageId)
     if (cached !== undefined) return success(cached.data, false)
-    const session = this.ctx.sessions.get(request.sessionId)
-    if (session === undefined) return { ok: false, code: 'session-not-found' }
-    const text = spokenTextOf(session.events, request.messageId)
+    const events = await this.eventsOf(request.sessionId)
+    if (events === undefined) return { ok: false, code: 'session-not-found' }
+    const text = spokenTextOf(events, request.messageId)
     if (text === undefined) return { ok: false, code: 'message-not-found' }
     try {
       return success(await this.ensureAudio(request.messageId, text), true)
     } catch (error: unknown) {
       return { ok: false, code: 'synthesis-failed', detail: String(error) }
     }
+  }
+
+  /**
+   * The events a read request may address.
+   *
+   * A session running in this process is authoritative — it can hold events
+   * not yet durable. Every other session the UI can list is historical: the
+   * live store reports it absent, so the durable log is the only readable
+   * copy. Reading it there is what makes the play control work on threads the
+   * server did not itself run.
+   *
+   * @param sessionId - the session whose events are wanted.
+   * @returns the events, or `undefined` when neither source holds the session.
+   */
+  private async eventsOf(sessionId: string): Promise<readonly SessionEvent[] | undefined> {
+    const live = this.ctx.sessions.get(sessionId)
+    if (live !== undefined) return live.events
+    const persistence = this.ctx.get('sessionPersistence') as
+      | { inspect(id: string): Promise<{ events: readonly SessionEvent[] } | undefined> }
+      | undefined
+    if (persistence === undefined) return undefined
+    const inspected = await persistence.inspect(sessionId).catch(() => undefined)
+    return inspected === undefined ? undefined : inspected.events
   }
 
   /**

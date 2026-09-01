@@ -105,20 +105,20 @@ export function apply(ctx: Context, config: Config): void {
     ...config.provider === undefined ? {} : { provider: config.provider },
   })
 
-  ctx.inject(['tts'], async (tts: Context) => {
-    // The managed credential store is the Harness's own plane and holds keys a
-    // launched process never carries in its environment; the environment is the
-    // fallback for a deployment that exports them instead.
-    const credentials = tts.get('credentials') as
-      | { resolve(ref: string): Promise<{ value?: string } | undefined> }
-      | undefined
-    const secret = async (ref: string | undefined): Promise<string | undefined> => {
-      if (ref === undefined) return undefined
-      const stored = credentials === undefined ? undefined : (await credentials.resolve(ref))?.value
-      return stored ?? process.env[ref]
+  // Route registration waits for both the seam and the credentials service:
+  // the seam accepts providers, and a key reference is readable only once the
+  // credentials service has started — reading it at plugin load races that
+  // startup and registers routes with empty keys. The credentials service
+  // layers the inherited environment above its managed store, so `apiKeyEnv`
+  // covers both an exported variable and a stored key.
+  ctx.inject(['tts', 'credentials'], async (scope: Context) => {
+    const credentials = scope.get('credentials') as {
+      resolve(ref: string): Promise<{ value?: string } | undefined>
     }
+    const secret = async (ref: string | undefined): Promise<string | undefined> =>
+      ref === undefined ? undefined : (await credentials.resolve(ref))?.value
     for (const [id, route] of Object.entries(config.providers)) {
-      tts.tts.registerProvider(new OpenAiTtsProvider({
+      scope.tts.registerProvider(new OpenAiTtsProvider({
         id,
         apiKey: route.apiKey ?? await secret(route.apiKeyEnv) ?? '',
         baseURL: route.baseURL ?? await secret(route.baseURLEnv) ?? OPENAI_DEFAULT_BASE_URL,

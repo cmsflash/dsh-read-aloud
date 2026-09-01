@@ -55,6 +55,19 @@ export declare class ReadAloudService extends Service {
      */
     audio(request: SpeechAudioRequest): Promise<SpeechAudioResult>;
     /**
+     * The events a read request may address.
+     *
+     * A session running in this process is authoritative — it can hold events
+     * not yet durable. Every other session the UI can list is historical: the
+     * live store reports it absent, so the durable log is the only readable
+     * copy. Reading it there is what makes the play control work on threads the
+     * server did not itself run.
+     *
+     * @param sessionId - the session whose events are wanted.
+     * @returns the events, or `undefined` when neither source holds the session.
+     */
+    private eventsOf;
+    /**
      * Synthesize and cache one message's audio, joining any in-flight call for
      * the same message so a turn-end job and a playback request never bill twice.
      * @param messageId - the message the audio belongs to.
