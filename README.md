@@ -58,7 +58,7 @@ Audio is a regenerable cache under `$DSH_HOME/cache/read-aloud/`, keyed by `mess
 
 ## Transport
 
-The browser sends message identity, never prose: the Host resolves spoken text from its own Session log. Audio crosses a loopback-only `/dsh-read-aloud` RPC channel with hand-written payload validation, because an external plugin cannot contribute to the Harness's generated Remote assembly.
+The browser sends message identity, never prose: the Host resolves spoken text from its own Session log — the live store for a session the process is running, the durable log for any historical session the UI can list. Audio crosses a loopback-only `/dsh-read-aloud` RPC channel with hand-written payload validation, because an external plugin cannot contribute to the Harness's generated Remote assembly.
 
 ## Known limitations
 

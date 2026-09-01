@@ -17,9 +17,11 @@
         bitrate: 64000
         maxChars: 10000
         providers:
+          # The gateway host is deployment config, not a secret; a route whose
+          # host varies by deployment uses baseURLEnv instead.
           litellm:
             apiKeyEnv: LITELLM_API_KEY
-            baseURLEnv: LITELLM_BASE_URL
+            baseURL: https://litellm-proxy.taildb21e0.ts.net/v1
           openai:
             apiKeyEnv: OPENAI_API_KEY
         ttlDays: 7
