@@ -69,7 +69,7 @@ export class ReadAloudService extends Service {
 
   /** Sweep expired artifacts once at startup, then follow completed turns. */
   protected [Service.init](): void {
-    void this.store.sweep()
+    this.detach(this.store.sweep(), 'sweeping the audio cache')
     if (!this.synthesizeOnTurnEnd) return
     this.ctx.on('session/event', (session: any, event: any) => {
       if (event.type !== 'turn/end') return
@@ -80,7 +80,30 @@ export class ReadAloudService extends Service {
       if (session.header.origin === 'subagent') return
       const closing = closingMessageOf(session.events, event.data.turn)
       if (closing === undefined) return
-      void this.ensureAudio(closing.messageId, closing.text)
+      this.detach(
+        this.ensureAudio(closing.messageId, closing.text),
+        `synthesizing audio for message ${closing.messageId}`,
+      )
+    })
+  }
+
+  /**
+   * Consume a background promise nobody awaits, reporting a rejection as a
+   * warning.
+   *
+   * Read-aloud audio is a regenerable cache, so a failed background job costs
+   * one unplayable message: playback resynthesizes on demand and reports its
+   * own failure through {@link ReadAloudService.audio}. An unhandled rejection
+   * here would instead reach the Host's `unhandledRejection` fail-loud handler
+   * and exit the process, so this boundary is what keeps a transient speech
+   * route or filesystem failure from taking the server down with it.
+   *
+   * @param work - the promise to consume; its value is discarded.
+   * @param description - what was being attempted, used in the warning.
+   */
+  private detach(work: Promise<unknown>, description: string): void {
+    void work.catch((error: unknown) => {
+      this.ctx.logger.warn(`read-aloud: ${description} failed: ${String(error)}`)
     })
   }
 

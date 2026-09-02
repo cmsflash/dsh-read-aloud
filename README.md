@@ -65,7 +65,11 @@ The browser sends message identity, never prose: the Host resolves spoken text f
 - **`bitrate` is not portable.** It reaches the vendor through `extra_body`; only vendors that read a bitrate field honor it.
 - **Voice and model identifiers are unvalidated and vendor-specific.** A voice valid on one route may be rejected by another, and the failure surfaces only at synthesis.
 - **No usage passthrough.** The OpenAI-shaped reply is audio bytes with no usage envelope, so billed characters and duration are unavailable even when the vendor tracks them.
-- **Unattended synthesis failures are silent.** The `turn/end` job discards its error; a broken route shows up as a play button that does nothing.
+- **Unattended synthesis failures are warnings, not errors.** The `turn/end` job reports a rejection through `ctx.logger.warn` and stops there; to anyone not reading the log, a broken route shows up as a play button that does nothing.
+
+## Failure containment
+
+Every background job this plugin starts — startup cache sweep, `turn/end` synthesis, and speech-route registration — settles its own errors. That boundary is load-bearing rather than cosmetic: the Harness installs an `unhandledRejection` handler that treats an escaped rejection as a fatal load failure and exits the process, so an unguarded background job turns a transient speech-route outage into a dead server. A failure costs one unplayable message; playback resynthesizes on demand and reports its own result through the RPC channel.
 
 ## Development
 

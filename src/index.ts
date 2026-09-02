@@ -111,19 +111,27 @@ export function apply(ctx: Context, config: Config): void {
   // startup and registers routes with empty keys. The credentials service
   // layers the inherited environment above its managed store, so `apiKeyEnv`
   // covers both an exported variable and a stored key.
+  // A credential read or a duplicate route id must not escape as an unhandled
+  // rejection: the Host exits the process on one. Losing a route degrades to
+  // synthesis reporting no usable provider, which playback surfaces as a
+  // failed read rather than a dead server.
   ctx.inject(['tts', 'credentials'], async (scope: Context) => {
-    const credentials = scope.get('credentials') as {
-      resolve(ref: string): Promise<{ value?: string } | undefined>
-    }
-    const secret = async (ref: string | undefined): Promise<string | undefined> =>
-      ref === undefined ? undefined : (await credentials.resolve(ref))?.value
-    for (const [id, route] of Object.entries(config.providers)) {
-      scope.tts.registerProvider(new OpenAiTtsProvider({
-        id,
-        apiKey: route.apiKey ?? await secret(route.apiKeyEnv) ?? '',
-        baseURL: route.baseURL ?? await secret(route.baseURLEnv) ?? OPENAI_DEFAULT_BASE_URL,
-        timeoutMs: route.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-      }))
+    try {
+      const credentials = scope.get('credentials') as {
+        resolve(ref: string): Promise<{ value?: string } | undefined>
+      }
+      const secret = async (ref: string | undefined): Promise<string | undefined> =>
+        ref === undefined ? undefined : (await credentials.resolve(ref))?.value
+      for (const [id, route] of Object.entries(config.providers)) {
+        scope.tts.registerProvider(new OpenAiTtsProvider({
+          id,
+          apiKey: route.apiKey ?? await secret(route.apiKeyEnv) ?? '',
+          baseURL: route.baseURL ?? await secret(route.baseURLEnv) ?? OPENAI_DEFAULT_BASE_URL,
+          timeoutMs: route.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        }))
+      }
+    } catch (error: unknown) {
+      scope.logger.warn(`read-aloud: registering speech routes failed: ${String(error)}`)
     }
   })
 

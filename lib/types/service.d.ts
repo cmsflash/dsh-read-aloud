@@ -49,6 +49,21 @@ export declare class ReadAloudService extends Service {
     /** Sweep expired artifacts once at startup, then follow completed turns. */
     protected [Service.init](): void;
     /**
+     * Consume a background promise nobody awaits, reporting a rejection as a
+     * warning.
+     *
+     * Read-aloud audio is a regenerable cache, so a failed background job costs
+     * one unplayable message: playback resynthesizes on demand and reports its
+     * own failure through {@link ReadAloudService.audio}. An unhandled rejection
+     * here would instead reach the Host's `unhandledRejection` fail-loud handler
+     * and exit the process, so this boundary is what keeps a transient speech
+     * route or filesystem failure from taking the server down with it.
+     *
+     * @param work - the promise to consume; its value is discarded.
+     * @param description - what was being attempted, used in the warning.
+     */
+    private detach;
+    /**
      * Read one message's audio, synthesizing it when the cache does not hold it.
      * @param request - the Session and message to read aloud.
      * @returns base64 audio, or an explicit failure.
