@@ -9,7 +9,7 @@
  */
 
 import type { ReadAloudService } from './service.ts'
-import type { SpeechAudioResult } from './cache-types.ts'
+import type { SpeechAudioResult, SpeechPlaybackStage } from './cache-types.ts'
 
 /** Channel the browser half calls; one route per plugin. */
 export const CHANNEL = '/dsh-read-aloud'
@@ -42,6 +42,17 @@ function id(value: unknown, label: string): string {
   return value
 }
 
+/** The stages a browser may report; anything else is a malformed payload. */
+const STAGES: readonly SpeechPlaybackStage[] = ['request', 'decode', 'play']
+
+/** Reject a stage outside the declared set, so the log cannot carry free text. */
+function stage(value: unknown): SpeechPlaybackStage {
+  if (!STAGES.includes(value as SpeechPlaybackStage)) {
+    throw new Error(`stage must be one of ${STAGES.join(', ')}`)
+  }
+  return value as SpeechPlaybackStage
+}
+
 /**
  * Register the read-aloud RPC channel.
  *
@@ -65,6 +76,15 @@ export function registerReadAloudRpc(ctx: RpcContext, service: ReadAloudService)
         // The browser unwraps one envelope, so the cache's own ok/code result
         // rides inside rather than being flattened into it.
         return { ok: true, value: result }
+      }
+      case 'playback-failed': {
+        service.reportPlaybackFailure({
+          sessionId: id(payload.sessionId, 'sessionId'),
+          messageId: id(payload.messageId, 'messageId'),
+          stage: stage(payload.stage),
+          reason: id(payload.reason, 'reason'),
+        })
+        return { ok: true, value: undefined }
       }
       default:
         throw new Error(`unknown read-aloud endpoint: ${endpoint}`)

@@ -12,7 +12,7 @@
  * @module @dsh-external/dsh-read-aloud/service
  */
 import { Context, Service } from '@deepseek-ai/cordis';
-import type { SpeechAudioRequest, SpeechAudioResult } from './cache-types.ts';
+import type { SpeechAudioRequest, SpeechAudioResult, SpeechPlaybackFailureReport } from './cache-types.ts';
 declare module '@deepseek-ai/cordis' {
     interface Context {
         readAloud: ReadAloudService;
@@ -69,6 +69,29 @@ export declare class ReadAloudService extends Service {
      * @returns base64 audio, or an explicit failure.
      */
     audio(request: SpeechAudioRequest): Promise<SpeechAudioResult>;
+    /**
+     * Log a refused audio request and return it unchanged.
+     *
+     * A refused request reaches the browser as a result code rather than a
+     * thrown error, so nothing else records it: the reader sees one tooltip and
+     * the Host keeps no trace. Logging here is what makes an on-demand failure
+     * diagnosable afterwards, as the turn-end job already is.
+     *
+     * @param request - the addressed Session and message.
+     * @param failure - the failure being returned to the caller.
+     * @returns `failure`, unchanged.
+     */
+    private refuse;
+    /**
+     * Record a playback failure the browser half observed.
+     *
+     * Decoding and audio-element playback run after this process has already
+     * answered, so their failures are invisible here and would otherwise leave
+     * the reader's "could not play" tooltip as the only evidence.
+     *
+     * @param report - the addressed message, the stage that failed, and why.
+     */
+    reportPlaybackFailure(report: SpeechPlaybackFailureReport): void;
     /**
      * The events a read request may address.
      *

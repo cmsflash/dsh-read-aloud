@@ -19,7 +19,13 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { ReadAloudStore } from './store.ts'
 import { closingMessageOf, spokenTextOf } from './text.ts'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
-import type { SpeechAudioRequest, SpeechAudioResult, SpeechAudioValue } from './cache-types.ts'
+import type {
+  SpeechAudioFailure,
+  SpeechAudioRequest,
+  SpeechAudioResult,
+  SpeechAudioValue,
+  SpeechPlaybackFailureReport,
+} from './cache-types.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -116,14 +122,51 @@ export class ReadAloudService extends Service {
     const cached = await this.store.read(request.messageId)
     if (cached !== undefined) return success(cached.data, false)
     const events = await this.eventsOf(request.sessionId)
-    if (events === undefined) return { ok: false, code: 'session-not-found' }
+    if (events === undefined) return this.refuse(request, { ok: false, code: 'session-not-found' })
     const text = spokenTextOf(events, request.messageId)
-    if (text === undefined) return { ok: false, code: 'message-not-found' }
+    if (text === undefined) return this.refuse(request, { ok: false, code: 'message-not-found' })
     try {
       return success(await this.ensureAudio(request.messageId, text), true)
     } catch (error: unknown) {
-      return { ok: false, code: 'synthesis-failed', detail: String(error) }
+      return this.refuse(request, { ok: false, code: 'synthesis-failed', detail: String(error) })
     }
+  }
+
+  /**
+   * Log a refused audio request and return it unchanged.
+   *
+   * A refused request reaches the browser as a result code rather than a
+   * thrown error, so nothing else records it: the reader sees one tooltip and
+   * the Host keeps no trace. Logging here is what makes an on-demand failure
+   * diagnosable afterwards, as the turn-end job already is.
+   *
+   * @param request - the addressed Session and message.
+   * @param failure - the failure being returned to the caller.
+   * @returns `failure`, unchanged.
+   */
+  private refuse(request: SpeechAudioRequest, failure: SpeechAudioFailure): SpeechAudioFailure {
+    const detail = failure.detail === undefined ? '' : `: ${failure.detail}`
+    this.ctx.logger.warn(
+      `read-aloud: audio for message ${request.messageId} in session ${request.sessionId}`
+      + ` refused (${failure.code})${detail}`,
+    )
+    return failure
+  }
+
+  /**
+   * Record a playback failure the browser half observed.
+   *
+   * Decoding and audio-element playback run after this process has already
+   * answered, so their failures are invisible here and would otherwise leave
+   * the reader's "could not play" tooltip as the only evidence.
+   *
+   * @param report - the addressed message, the stage that failed, and why.
+   */
+  reportPlaybackFailure(report: SpeechPlaybackFailureReport): void {
+    this.ctx.logger.warn(
+      `read-aloud: playback of message ${report.messageId} in session ${report.sessionId}`
+      + ` failed at ${report.stage}: ${report.reason}`,
+    )
   }
 
   /**

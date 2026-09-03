@@ -60,12 +60,28 @@ Audio is a regenerable cache under `$DSH_HOME/cache/read-aloud/`, keyed by `mess
 
 The browser sends message identity, never prose: the Host resolves spoken text from its own Session log — the live store for a session the process is running, the durable log for any historical session the UI can list. Audio crosses a loopback-only `/dsh-read-aloud` RPC channel with hand-written payload validation, because an external plugin cannot contribute to the Harness's generated Remote assembly.
 
+## Diagnosing a failed playback
+
+Every failure that reaches the reader as "Could not play audio" is logged by the Host as one `read-aloud:` warning naming the message, the Session, and the reason. Refusals (`session-not-found`, `message-not-found`, `synthesis-failed`) are logged where they are produced; failures that only the browser can observe — the channel call, base64 decoding, and `HTMLMediaElement` playback — are reported back over the same RPC channel and logged as `failed at <stage>`.
+
+Those warnings need an exporter that accepts level 2. Cordis drops `logger.warn` when no exporter's threshold reaches `WARN`, and the default is `INFO`, so a profile with no logger row records nothing:
+
+```yml
+- insert:
+    - id: logger-console
+      name: '@deepseek-ai/cordis-plugin-logger-console'
+      config:
+        levels:
+          default: 2
+```
+
 ## Known limitations
 
 - **`bitrate` is not portable.** It reaches the vendor through `extra_body`; only vendors that read a bitrate field honor it.
 - **Voice and model identifiers are unvalidated and vendor-specific.** A voice valid on one route may be rejected by another, and the failure surfaces only at synthesis.
 - **No usage passthrough.** The OpenAI-shaped reply is audio bytes with no usage envelope, so billed characters and duration are unavailable even when the vendor tracks them.
-- **Unattended synthesis failures are warnings, not errors.** The `turn/end` job reports a rejection through `ctx.logger.warn` and stops there; to anyone not reading the log, a broken route shows up as a play button that does nothing.
+- **Failures are warnings, not errors.** Both the `turn/end` job and a refused or failed playback report through `ctx.logger.warn` and stop there; to anyone not reading the log, a broken route shows up as a play button that does nothing.
+- **The reader is told nothing beyond "Could not play audio".** The failure reason reaches the log, not the tooltip, so a reader cannot distinguish a dead speech route from a message the Host could not resolve.
 
 ## Failure containment
 
