@@ -43,3 +43,24 @@ export interface SpeechAudioFailure {
 
 /** Result of one audio request. */
 export type SpeechAudioResult = SpeechAudioSuccess | SpeechAudioFailure
+
+/** Browser-side step that failed after the Host answered successfully. */
+export type SpeechPlaybackStage =
+  /** The channel call itself rejected, or returned an unreadable envelope. */
+  | 'request'
+  /** Base64 decoding or blob construction threw. */
+  | 'decode'
+  /** `HTMLMediaElement.play()` rejected, or the element raised `error`. */
+  | 'play'
+
+/** One playback failure the browser reports back for logging. */
+export interface SpeechPlaybackFailureReport {
+  /** Session owning the addressed message. */
+  readonly sessionId: SessionId
+  /** The message whose playback failed. */
+  readonly messageId: MessageId
+  /** Which browser-side step failed. */
+  readonly stage: SpeechPlaybackStage
+  /** Failure text, already stringified by the browser half. */
+  readonly reason: string
+}

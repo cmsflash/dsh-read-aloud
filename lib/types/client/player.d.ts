@@ -19,6 +19,10 @@ export type SpeechAudioLoader = (messageId: MessageId) => Promise<{
     data: string;
     mediaType: string;
 } | undefined>;
+/** Browser-side step that failed; mirrors the Host's `SpeechPlaybackStage`. */
+export type SpeechFailureStage = 'request' | 'decode' | 'play';
+/** Reports one playback failure for logging; never rejects. */
+export type SpeechFailureReporter = (messageId: MessageId, stage: SpeechFailureStage, reason: string) => void;
 /**
  * Per-Session playback controller.
  *
@@ -27,13 +31,18 @@ export type SpeechAudioLoader = (messageId: MessageId) => Promise<{
  */
 export declare class SpeechPlayer {
     private readonly load;
+    private readonly report;
     private view;
     private readonly listeners;
     private audio;
     private objectUrl;
     /** Distinguishes a settled load from one superseded by a later request. */
     private generation;
-    constructor(load: SpeechAudioLoader);
+    /**
+     * @param load - fetches one message's audio.
+     * @param report - records a failure for the Host log.
+     */
+    constructor(load: SpeechAudioLoader, report: SpeechFailureReporter);
     /**
      * Subscribe to playback changes.
      * @param listener - called after every state change.
@@ -50,6 +59,17 @@ export declare class SpeechPlayer {
      * @param messageId - the message to read.
      */
     toggle(messageId: MessageId): Promise<void>;
+    /**
+     * Publish the error state and report why it happened.
+     *
+     * Every failing arm goes through here so the reader's generic tooltip and
+     * the Host log can never disagree about whether playback failed.
+     *
+     * @param messageId - the message that failed.
+     * @param stage - which step failed.
+     * @param reason - the failure text.
+     */
+    private fail;
     /** Stop any active playback and release its resources. */
     stop(): void;
     /** Release every resource; the player is unusable afterwards. */
