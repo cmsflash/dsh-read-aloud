@@ -56,8 +56,16 @@ function stage(value: unknown): SpeechPlaybackStage {
 /**
  * Register the read-aloud RPC channel.
  *
- * Loopback authority only: the audio route reads Session prose, so a
- * trusted-host caller must not reach it.
+ * Trusted-host authority, the same grant `/api` applies. The audio route
+ * speaks Session prose that `session.history` already returns verbatim to any
+ * caller passing that fence, so pinning this channel to loopback withheld no
+ * secret — it only made the play control dead on every non-loopback client
+ * (phones and tablets reaching the deployment over Tailscale), because the
+ * `playback-failed` route was refused by the same fence and the failure went
+ * unlogged.
+ *
+ * The narrower grant belongs to the configuration plane, which `/api` pins to
+ * loopback by method. Reading a reply aloud is not part of it.
  *
  * @param ctx - Host context carrying `connection.rpc`.
  * @param service - the cache service answering the audio request.
@@ -89,5 +97,5 @@ export function registerReadAloudRpc(ctx: RpcContext, service: ReadAloudService)
       default:
         throw new Error(`unknown read-aloud endpoint: ${endpoint}`)
     }
-  }, { authority: 'loopback' })
+  }, { authority: 'trusted-host' })
 }
