@@ -8,6 +8,12 @@ declare module '*.module.css' {
 declare module '@deepseek-ai/cordis' {
   export interface Context {
     readonly sessions: any
+    readonly sessionQuery: {
+      observeSession(id: string, options: { projectionMode: 'none' }): Promise<{
+        readonly events: readonly import('@deepseek-ai/dsh-session/types').SessionEvent[]
+        [Symbol.dispose](): void
+      }>
+    }
     readonly connection: any
     readonly logger: { warn(message: string): void }
     /**

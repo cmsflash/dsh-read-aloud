@@ -23,12 +23,12 @@ export interface SpeechAudioSuccess {
     readonly value: SpeechAudioValue;
 }
 /** Reasons audio cannot be produced for an addressed message. */
-export type SpeechAudioFailureCode = 'session-not-found' | 'message-not-found' | 'synthesis-failed';
+export type SpeechAudioFailureCode = 'session-not-found' | 'session-read-failed' | 'message-not-found' | 'synthesis-failed';
 /** Failed audio reply. */
 export interface SpeechAudioFailure {
     readonly ok: false;
     readonly code: SpeechAudioFailureCode;
-    /** Provider or capability detail, present only for `synthesis-failed`. */
+    /** Diagnostic detail for a session read or synthesis failure. */
     readonly detail?: string;
 }
 /** Result of one audio request. */

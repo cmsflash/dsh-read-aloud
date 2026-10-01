@@ -30,6 +30,7 @@ export interface SpeechAudioSuccess {
 /** Reasons audio cannot be produced for an addressed message. */
 export type SpeechAudioFailureCode =
   | 'session-not-found'
+  | 'session-read-failed'
   | 'message-not-found'
   | 'synthesis-failed'
 
@@ -37,7 +38,7 @@ export type SpeechAudioFailureCode =
 export interface SpeechAudioFailure {
   readonly ok: false
   readonly code: SpeechAudioFailureCode
-  /** Provider or capability detail, present only for `synthesis-failed`. */
+  /** Diagnostic detail for a session read or synthesis failure. */
   readonly detail?: string
 }
 
