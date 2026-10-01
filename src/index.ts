@@ -140,7 +140,8 @@ export function apply(ctx: Context, config: Config): void {
     synthesizeOnTurnEnd: config.synthesizeOnTurnEnd,
   })
 
-  ctx.inject(['readAloud', 'connection'], (scoped: Context) => {
+  // `connection.rpc.handle` registers the route on the caller's `webServer`.
+  ctx.inject(['readAloud', 'connection', 'webServer'], (scoped: Context) => {
     scoped.effect(() => {
       const dispose = registerReadAloudRpc(scoped as never, scoped.readAloud)
       return () => void dispose()
