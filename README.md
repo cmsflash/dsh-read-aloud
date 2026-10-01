@@ -58,13 +58,13 @@ Audio is a regenerable cache under `$DSH_HOME/cache/read-aloud/`, keyed by `mess
 
 ## Transport
 
-The browser sends message identity, never prose: the Host resolves spoken text from its own Session log — the live store for a session the process is running, the durable log for any historical session the UI can list. Audio crosses a `/dsh-read-aloud` RPC channel with hand-written payload validation, because an external plugin cannot contribute to the Harness's generated Remote assembly.
+The browser sends message identity, never prose. The plugin requires `sessionQuery` and resolves text through `observeSession(id, { projectionMode: 'none' })`, which prefers live events and otherwise reads the stored session without attaching it. It releases each observation before synthesizing audio. Selecting a turn's closing message requires checking later assistant messages in the same log. Completed-turn synthesis uses this same reader and excludes sessions with a nonzero delegation depth. Audio crosses a `/dsh-read-aloud` RPC channel with hand-written payload validation, because an external plugin cannot contribute to the Harness's generated Remote assembly.
 
 The channel takes `trusted-host` authority, the same grant `/api` applies: every request still passes the browser-trust fence, so a deployment reached through a declared `trustedHosts` authority can play audio while an unlisted Host is refused. Loopback-only withheld nothing — `session.history` already returns the same prose to any caller passing that fence — and it left the control dead on every non-loopback client.
 
 ## Diagnosing a failed playback
 
-Every failure that reaches the reader as "Could not play audio" is logged by the Host as one `read-aloud:` warning naming the message, the Session, and the reason. Refusals (`session-not-found`, `message-not-found`, `synthesis-failed`) are logged where they are produced; failures that only the browser can observe — the channel call, base64 decoding, and `HTMLMediaElement` playback — are reported back over the same RPC channel and logged as `failed at <stage>`.
+Every failure that reaches the reader as "Could not play audio" is logged by the Host as one `read-aloud:` warning naming the message, the Session, and the reason. Refusals (`session-not-found`, `session-read-failed`, `message-not-found`, `synthesis-failed`) are logged where they are produced; failures that only the browser can observe — the channel call, base64 decoding, and `HTMLMediaElement` playback — are reported back over the same RPC channel and logged as `failed at <stage>`.
 
 A failure the browser reports is only as reachable as the channel carrying it: when the fence refuses the client, it refuses `playback-failed` too, so the reason never arrives. A client that fails every playback while logging nothing is that case, and the Host is the wrong place to look — read the browser console instead.
 
@@ -95,7 +95,11 @@ Every background job this plugin starts — startup cache sweep, `turn/end` synt
 
 ```sh
 pnpm install
-pnpm run check    # typecheck + build
+pnpm run check    # typecheck + build + tests
 ```
 
 The build keeps every `@deepseek-ai/*` import external: the running Harness supplies them, and bundling a second copy would fork the Cordis service registry. Compile-time resolution needs `@deepseek-ai/cordis` and `@deepseek-ai/schemastery` linked into `node_modules` from a Harness checkout.
+
+Tests exercise the built plugin against that checkout's real Session store, query reader, and JSONL persistence, with isolated temporary storage and a deterministic speech provider. Set `DSH_CHECKOUT` to select another built Harness checkout. Tests do not contact or restart a running server.
+
+For a local recorded-session regression, set `READ_ALOUD_SESSION_FILE` to a stored generation and `READ_ALOUD_MESSAGE_ID` to the failing reply before running `pnpm test`. Optionally set `READ_ALOUD_EXPECTED_PREFIX` to check the selected prose. This test reads an isolated copy, leaves the original session untouched, and does not call a paid speech provider.

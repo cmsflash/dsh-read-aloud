@@ -55,7 +55,7 @@ const DAY_MS = 86_400_000
  * carry the text.
  */
 export class ReadAloudService extends Service {
-  static inject = ['sessions', 'tts']
+  static inject = ['sessions', 'sessionQuery', 'tts']
 
   private readonly store: ReadAloudStore
   private readonly synthesizeOnTurnEnd: boolean
@@ -77,18 +77,16 @@ export class ReadAloudService extends Service {
   protected [Service.init](): void {
     this.detach(this.store.sweep(), 'sweeping the audio cache')
     if (!this.synthesizeOnTurnEnd) return
-    this.ctx.on('session/event', (session: any, event: any) => {
+    this.ctx.on('session/event', (session: { id: string; header: { delegationDepth: number } }, event: SessionEvent) => {
       if (event.type !== 'turn/end') return
       // An interrupted turn has no settled closing prose to read.
       if (event.data.reason.kind !== 'completed') return
       // A subagent transcript has no playback surface; synthesizing it would
       // bill for audio nothing can play.
-      if (session.header.origin === 'subagent') return
-      const closing = closingMessageOf(session.events, event.data.turn)
-      if (closing === undefined) return
+      if (session.header.delegationDepth > 0) return
       this.detach(
-        this.ensureAudio(closing.messageId, closing.text),
-        `synthesizing audio for message ${closing.messageId}`,
+        this.synthesizeClosingMessage(session.id, event.data.turn),
+        `synthesizing closing audio for session ${session.id}, turn ${event.data.turn}`,
       )
     })
   }
@@ -121,9 +119,15 @@ export class ReadAloudService extends Service {
   async audio(request: SpeechAudioRequest): Promise<SpeechAudioResult> {
     const cached = await this.store.read(request.messageId)
     if (cached !== undefined) return success(cached.data, false)
-    const events = await this.eventsOf(request.sessionId)
-    if (events === undefined) return this.refuse(request, { ok: false, code: 'session-not-found' })
-    const text = spokenTextOf(events, request.messageId)
+    let text: string | undefined
+    try {
+      text = await this.readSessionText(request.sessionId, events => spokenTextOf(events, request.messageId))
+    } catch (error: unknown) {
+      if (error instanceof Error && 'code' in error && error.code === 'SESSION_QUERY_SESSION_NOT_FOUND') {
+        return this.refuse(request, { ok: false, code: 'session-not-found' })
+      }
+      return this.refuse(request, { ok: false, code: 'session-read-failed', detail: String(error) })
+    }
     if (text === undefined) return this.refuse(request, { ok: false, code: 'message-not-found' })
     try {
       return success(await this.ensureAudio(request.messageId, text), true)
@@ -169,27 +173,21 @@ export class ReadAloudService extends Service {
     )
   }
 
-  /**
-   * The events a read request may address.
-   *
-   * A session running in this process is authoritative — it can hold events
-   * not yet durable. Every other session the UI can list is historical: the
-   * live store reports it absent, so the durable log is the only readable
-   * copy. Reading it there is what makes the play control work on threads the
-   * server did not itself run.
-   *
-   * @param sessionId - the session whose events are wanted.
-   * @returns the events, or `undefined` when neither source holds the session.
-   */
-  private async eventsOf(sessionId: string): Promise<readonly SessionEvent[] | undefined> {
-    const live = this.ctx.sessions.get(sessionId)
-    if (live !== undefined) return live.events
-    const persistence = this.ctx.get('sessionPersistence') as
-      | { inspect(id: string): Promise<{ events: readonly SessionEvent[] } | undefined> }
-      | undefined
-    if (persistence === undefined) return undefined
-    const inspected = await persistence.inspect(sessionId).catch(() => undefined)
-    return inspected === undefined ? undefined : inspected.events
+  private async readSessionText<T>(
+    sessionId: string,
+    select: (events: readonly SessionEvent[]) => T,
+  ): Promise<T> {
+    const observation = await this.ctx.sessionQuery.observeSession(sessionId, { projectionMode: 'none' })
+    try {
+      return select(observation.events)
+    } finally {
+      observation[Symbol.dispose]()
+    }
+  }
+
+  private async synthesizeClosingMessage(sessionId: string, turn: number): Promise<void> {
+    const closing = await this.readSessionText(sessionId, events => closingMessageOf(events, turn))
+    if (closing !== undefined) await this.ensureAudio(closing.messageId, closing.text)
   }
 
   /**

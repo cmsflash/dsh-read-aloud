@@ -47,7 +47,8 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "check": "pnpm typecheck && pnpm build"
+    "test": "pnpm build && node --test --test-timeout=15000 tests/*.test.mjs",
+    "check": "pnpm typecheck && pnpm test"
   },
   "peerDependencies": {
     "react": "^18.2.0"
