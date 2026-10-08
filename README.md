@@ -48,6 +48,8 @@ They ship together because they change together: a voice or model change touches
 
 `model`, `voice`, and `provider` move together: a `minimax/*` model resolves only through a gateway route, so pinning the provider is correctness rather than tie-breaking.
 
+The bundled patch reads the `litellm` route's key from `LITELLM_API_KEY` and its base URL from `LITELLM_BASE_URL`, the full base including `/v1` (for example `https://litellm.example.com/v1`); the `openai` route reads `OPENAI_API_KEY`. Every `apiKeyEnv` and `baseURLEnv` resolves through the Harness credentials service, so an exported variable, a stored credential, or a `.env` entry can supply it. A route with no `baseURL` whose `baseURLEnv` resolves to nothing falls back to OpenAI's public API and sends its key there, so set `LITELLM_BASE_URL` wherever `LITELLM_API_KEY` is set.
+
 ## Cost
 
 Always-on synthesis bills every completed turn whether or not anyone presses play. Vendors bill by input characters, so `bitrate` is a storage lever and not a spend lever. Set `synthesizeOnTurnEnd: false` to pay only for what is played.

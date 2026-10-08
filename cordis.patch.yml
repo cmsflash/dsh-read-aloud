@@ -17,11 +17,9 @@
         bitrate: 64000
         maxChars: 10000
         providers:
-          # The gateway host is deployment config, not a secret; a route whose
-          # host varies by deployment uses baseURLEnv instead.
           litellm:
             apiKeyEnv: LITELLM_API_KEY
-            baseURL: ***REMOVED***
+            baseURLEnv: LITELLM_BASE_URL
           openai:
             apiKeyEnv: OPENAI_API_KEY
         ttlDays: 7
