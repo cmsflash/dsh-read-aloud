@@ -51,9 +51,13 @@
     "check": "pnpm typecheck && pnpm test"
   },
   "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/schemastery": "*",
     "react": "^18.2.0"
   },
   "devDependencies": {
+    "@deepseek-ai/cordis": "link:../../deepseek-harness/vendor/cordis",
+    "@deepseek-ai/schemastery": "link:../../deepseek-harness/vendor/schemastery",
     "@types/node": "^22.20.1",
     "@types/react": "~18.3.1",
     "esbuild": "^0.25.0",

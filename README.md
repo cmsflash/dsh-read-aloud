@@ -18,7 +18,7 @@ dsh plugin --profile web add link:/path/to/dsh-read-aloud
 
 Restart the profile afterwards; host plugins mount at boot.
 
-Either route needs `@deepseek-ai/cordis` and `@deepseek-ai/schemastery` resolvable from the plugin directory — Node resolves the host bundle's external imports relative to the plugin, not the profile. A local checkout gets them by symlink (see [Development](#development)).
+Either route needs `@deepseek-ai/cordis` and `@deepseek-ai/schemastery` resolvable from the plugin directory — Node resolves the host bundle's external imports relative to the plugin, not the profile. A local checkout gets them from `pnpm install` when it sits next to a Harness checkout (see [Development](#development)).
 
 ## What it mounts
 
@@ -98,7 +98,7 @@ pnpm install
 pnpm run check    # typecheck + build + tests
 ```
 
-The build keeps every `@deepseek-ai/*` import external: the running Harness supplies them, and bundling a second copy would fork the Cordis service registry. Compile-time resolution needs `@deepseek-ai/cordis` and `@deepseek-ai/schemastery` linked into `node_modules` from a Harness checkout.
+The build keeps every `@deepseek-ai/*` import external: the running Harness supplies them, and bundling a second copy would fork the Cordis service registry. `@deepseek-ai/cordis` and `@deepseek-ai/schemastery` are peer dependencies; the dev dependencies link them from `../../deepseek-harness`, so clone this repository into a directory that sits beside your Harness checkout (for example `~/Programs/dsh-plugins/dsh-read-aloud` next to `~/Programs/deepseek-harness`), then run `pnpm install`.
 
 Tests exercise the built plugin against that checkout's real Session store, query reader, and JSONL persistence, with isolated temporary storage and a deterministic speech provider. Set `DSH_CHECKOUT` to select another built Harness checkout. Tests do not contact or restart a running server.
 
