@@ -13,7 +13,7 @@ const host = path => import(pathToFileURL(join(checkout, path)).href)
 const { Context } = await host('vendor/cordis/lib/index.js')
 const { default: SessionStore, Session } = await host('packages/core/session/lib/index.js')
 const { default: SessionQuery } = await host('packages/session-query/session-query/lib/index.js')
-const { default: JsonlPersistence } = await host('packages/session/session-persistence-jsonl/lib/index.js')
+const JsonlPersistence = await host('packages/session/session-persistence-jsonl/lib/index.js')
 
 async function setup(t, synthesizeOnTurnEnd = false) {
   const home = await mkdtemp(join(tmpdir(), 'read-aloud-test-'))
@@ -79,7 +79,8 @@ test('reads a stored session through real persistence handles without attaching 
   const { ctx, spoken } = await setup(t)
   const session = Session.create('stored')
   const header = session.header
-  const events = [session.append('turn/start', { turn: 1 }), appendReply(session, 'stored-reply', 'Stored reply'),
+  const events = [session.append('turn/start', { turn: 1 }), session.append('step/start', { turn: 1, step: 1 }),
+    appendReply(session, 'stored-reply', 'Stored reply'), session.append('step/end', { turn: 1, step: 1 }),
     session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })]
   const handle = await ctx.sessionPersistence.create(header)
   try { await handle.append(events); await handle.flush() } finally { await handle.close() }
