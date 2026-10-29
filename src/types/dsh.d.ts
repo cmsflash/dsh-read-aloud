@@ -164,11 +164,11 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
   }
 
   /** Indeterminate-progress glyph, 16px. */
-  export function IconLoadingOutline16(props?: IconProps): ReactElement
+  export function IconLoadingOutlineRegular(props?: IconProps): ReactElement
   /** Play glyph, 16px. */
-  export function IconPlayOutline16(props?: IconProps): ReactElement
+  export function IconPlayOutlineRegular(props?: IconProps): ReactElement
   /** Stop glyph, 16px. */
-  export function IconStopFill16(props?: IconProps): ReactElement
+  export function IconStopFillRegular(props?: IconProps): ReactElement
 
   /** Where the bubble sits relative to its anchor. */
   export type TooltipSide = 'top' | 'right' | 'bottom' | 'left'

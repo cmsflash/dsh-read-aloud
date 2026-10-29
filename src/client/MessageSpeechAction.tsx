@@ -6,7 +6,7 @@
 
 import { useCallback } from 'react'
 import {
-  IconLoadingOutline16, IconPlayOutline16, IconStopFill16, Tooltip,
+  IconLoadingOutlineRegular, IconPlayOutlineRegular, IconStopFillRegular, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MessageSpeechActionProps } from './slots.ts'
 import css from './MessageSpeechAction.module.css'
@@ -39,8 +39,8 @@ export function MessageSpeechAction({ messageId, toggle, useSpeech, t }: Message
         onClick={onClick}
       >
         {status === 'loading'
-          ? <IconLoadingOutline16 />
-          : status === 'playing' ? <IconStopFill16 /> : <IconPlayOutline16 />}
+          ? <IconLoadingOutlineRegular />
+          : status === 'playing' ? <IconStopFillRegular /> : <IconPlayOutlineRegular />}
       </button>
     </Tooltip>
   )
