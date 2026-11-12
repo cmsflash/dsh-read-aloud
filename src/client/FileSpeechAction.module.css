@@ -1,0 +1,52 @@
+.tool {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 6px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tool svg {
+  width: 15px;
+  height: 15px;
+}
+
+@media (hover: hover) {
+  .tool:hover {
+    background: var(--dsw-alias-interactive-bg-hover);
+    color: var(--dsw-alias-label-primary);
+  }
+}
+
+.active {
+  color: var(--dsw-alias-label-primary);
+}
+
+.loading {
+  animation: file-speech-pulse 1.2s ease-in-out infinite;
+}
+
+.failed,
+.failed:hover {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+@keyframes file-speech-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading {
+    animation: none;
+    opacity: 0.6;
+  }
+}

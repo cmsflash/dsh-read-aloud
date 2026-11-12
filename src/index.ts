@@ -1,15 +1,18 @@
 /**
- * `@dsh-external/dsh-read-aloud`: read-aloud of assistant replies as one
- * installable bundle.
+ * `@dsh-external/dsh-read-aloud`: read-aloud of assistant replies and of
+ * Markdown and plain-text files as one installable bundle.
  *
  * Four Cordis roles ship together because they change together:
  * - `TtsRuntime` owns `ctx.tts`, the request/spec split, and provider selection.
  * - `OpenAiTtsProvider` registers one route per configured entry in that seam.
- * - `ReadAloudService` owns `ctx.readAloud`: the `turn/end` trigger and cache.
- * - the browser half plays it from the assistant-message action strip.
+ * - `ReadAloudService` owns `ctx.readAloud`: the `turn/end` trigger, the file
+ *   reader, and the cache.
+ * - the browser half plays it from the assistant-message action strip and the
+ *   document preview's header.
  *
  * Audio never enters the Session log: it is a regenerable cache keyed by
- * `messageId`, so replay and the Session format are untouched.
+ * `messageId` for a reply and by content for a file part, so replay and the
+ * Session format are untouched.
  * @module @dsh-external/dsh-read-aloud
  */
 
@@ -25,7 +28,13 @@ export { OpenAiTtsProvider, OPENAI_DEFAULT_BASE_URL } from './provider.ts'
 export { ReadAloudService } from './service.ts'
 export { CHANNEL } from './rpc.ts'
 export type { SpeechAudio, SpeechProvider, SpeechRequest, SpeechSpec } from './tts-types.ts'
-export type { SpeechAudioRequest, SpeechAudioResult, SpeechAudioValue } from './cache-types.ts'
+export type {
+  SpeechAudioRequest, SpeechAudioResult, SpeechAudioValue,
+  SpeechFileAudioRequest, SpeechFileAudioResult, SpeechFileAudioValue,
+} from './cache-types.ts'
+export { speakableKind } from './speakable.ts'
+export type { SpeakableKind } from './speakable.ts'
+export { speakableText, splitSegments } from './speech-text.ts'
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'read-aloud'
@@ -65,6 +74,8 @@ export interface Config {
   ttlDays: number
   /** Synthesize every completed turn as it ends. */
   synthesizeOnTurnEnd: boolean
+  fileMaxChars: number
+  fileSegmentChars: number
 }
 
 export const Config: z<Config> = z.object({
@@ -82,6 +93,10 @@ export const Config: z<Config> = z.object({
   })).required(),
   ttlDays: z.number().step(1).min(1).required(),
   synthesizeOnTurnEnd: z.boolean().required(),
+  // Defaulted, unlike the fields above, so a deployment whose config row
+  // predates file reading keeps loading and keeps reading replies.
+  fileMaxChars: z.number().step(1).min(1).default(100_000),
+  fileSegmentChars: z.number().step(1).min(1).default(1500),
 })
 
 /** Default request deadline: synthesis of a long reply is slower than a chat turn. */
@@ -97,6 +112,11 @@ const DEFAULT_TIMEOUT_MS = 120_000
  * @param config - bundle config; absent route fields fall back to the environment.
  */
 export function apply(ctx: Context, config: Config): void {
+  if (config.fileSegmentChars > config.maxChars) {
+    throw new Error(
+      `read-aloud: fileSegmentChars (${config.fileSegmentChars}) must not exceed maxChars (${config.maxChars})`,
+    )
+  }
   ctx.plugin(TtsRuntime, {
     model: config.model,
     voice: config.voice,
@@ -138,6 +158,8 @@ export function apply(ctx: Context, config: Config): void {
   ctx.plugin(ReadAloudService, {
     ttlDays: config.ttlDays,
     synthesizeOnTurnEnd: config.synthesizeOnTurnEnd,
+    fileMaxChars: config.fileMaxChars,
+    fileSegmentChars: config.fileSegmentChars,
   })
 
   // `connection.rpc.handle` registers the route on the caller's `webServer`.

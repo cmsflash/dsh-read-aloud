@@ -4,7 +4,9 @@
  * An external plugin cannot join `@deepseek-ai/dsh-api-remotes`, whose generated
  * Remote imports are a fixed in-repo list, so this channel replaces the Typert
  * Remote with a hand-validated JSON route. The endpoint set stays deliberately
- * narrow: identity in, audio out.
+ * narrow: identity in, audio out. A file is identity too: the Host reads it
+ * through its own workspace file service, so the browser sends a path and a
+ * part index, never text to speak.
  * @module @dsh-external/dsh-read-aloud/rpc
  */
 import type { ReadAloudService } from './service.ts';

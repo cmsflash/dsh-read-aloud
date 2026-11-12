@@ -112,6 +112,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      * ui-conversation; the render site passes the addressed message identity.
      */
     'conversation.chat.assistant-actions': { owner: { messageId: string } }
+    'sidebar.right.tab.document.actions': { owner: { readonly absolutePath: string } }
   }
 
   /** Owner props of one declared slot. */

@@ -13,17 +13,24 @@
  */
 
 import { Buffer } from 'node:buffer'
+import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import { ReadAloudStore } from './store.ts'
 import { closingMessageOf, spokenTextOf } from './text.ts'
+import { speakableKind } from './speakable.ts'
+import { speakableText, splitSegments } from './speech-text.ts'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 import type {
   SpeechAudioFailure,
   SpeechAudioRequest,
   SpeechAudioResult,
   SpeechAudioValue,
+  SpeechFileAudioFailure,
+  SpeechFileAudioFailureCode,
+  SpeechFileAudioRequest,
+  SpeechFileAudioResult,
   SpeechPlaybackFailureReport,
 } from './cache-types.ts'
 
@@ -42,10 +49,40 @@ export interface Config {
    * first playback request, trading latency for spend on turns nobody plays.
    */
   readonly synthesizeOnTurnEnd: boolean
+  readonly fileMaxChars: number
+  readonly fileSegmentChars: number
 }
 
 /** Milliseconds in one day, for the TTL conversion. */
 const DAY_MS = 86_400_000
+
+interface WorkspaceFilesReader {
+  read(
+    scope: { readonly sessionId: string; readonly workspaceRoot: string },
+    path: string,
+    range: { readonly offset?: number },
+    signal: AbortSignal,
+  ): Promise<{ readonly text: string; readonly lines: number; readonly eof: boolean }>
+}
+
+class FileRefusal extends Error {
+  constructor(readonly code: SpeechFileAudioFailureCode) {
+    super(code)
+  }
+}
+
+const FILE_FAILURES: Readonly<Record<string, SpeechFileAudioFailureCode>> = {
+  'workspace-file/not-found': 'file-not-found',
+  'workspace-file/not-regular-file': 'file-not-found',
+  'workspace-file/not-text': 'file-not-text',
+  'workspace-file/too-large': 'file-too-large',
+}
+
+function fileFailureOf(error: unknown): SpeechFileAudioFailure {
+  if (error instanceof FileRefusal) return { ok: false, code: error.code }
+  const code = typeof error === 'object' && error !== null && 'code' in error ? FILE_FAILURES[String(error.code)] : undefined
+  return code === undefined ? { ok: false, code: 'file-read-failed', detail: String(error) } : { ok: false, code }
+}
 
 /**
  * Cached read-aloud audio for finalized assistant messages.
@@ -59,7 +96,9 @@ export class ReadAloudService extends Service {
 
   private readonly store: ReadAloudStore
   private readonly synthesizeOnTurnEnd: boolean
-  /** In-flight synthesis per message, so a turn-end job and a play request share one call. */
+  private readonly fileMaxChars: number
+  private readonly fileSegmentChars: number
+  /** In-flight synthesis per cache key, so a turn-end job and a play request share one call. */
   private readonly inFlight = new Map<string, Promise<Uint8Array>>()
 
   /**
@@ -71,6 +110,8 @@ export class ReadAloudService extends Service {
     const home = process.env.DSH_HOME ?? join(homedir(), '.dsh')
     this.store = new ReadAloudStore(join(home, 'cache', 'read-aloud'), config.ttlDays * DAY_MS)
     this.synthesizeOnTurnEnd = config.synthesizeOnTurnEnd
+    this.fileMaxChars = config.fileMaxChars
+    this.fileSegmentChars = config.fileSegmentChars
   }
 
   /** Sweep expired artifacts once at startup, then follow completed turns. */
@@ -136,6 +177,68 @@ export class ReadAloudService extends Service {
     }
   }
 
+  async fileAudio(request: SpeechFileAudioRequest, signal: AbortSignal): Promise<SpeechFileAudioResult> {
+    const kind = speakableKind(request.path)
+    if (kind === undefined || !isAbsolute(request.path)) return this.refuseFile(request, { ok: false, code: 'file-unsupported' })
+    let source: { text: string; truncated: boolean }
+    try {
+      source = await this.readFileSource(request.sessionId, request.path, signal)
+    } catch (error: unknown) {
+      return this.refuseFile(request, fileFailureOf(error))
+    }
+    const segments = splitSegments(speakableText(source.text, kind), this.fileSegmentChars)
+    if (segments.length === 0) return this.refuseFile(request, { ok: false, code: 'file-empty' })
+    const text = segments[request.index]
+    if (text === undefined) return this.refuseFile(request, { ok: false, code: 'segment-out-of-range' })
+    const spec = this.ctx.tts.resolve({ text })
+    const key = `file-${createHash('sha256').update([spec.model, spec.voice, String(spec.bitrate), spec.text].join('\0')).digest('hex')}`
+    const reading = { index: request.index, count: segments.length, truncated: source.truncated }
+    try {
+      const cached = await this.store.read(key)
+      const data = cached?.data ?? await this.ensureAudio(key, text)
+      return { ok: true, value: { ...success(data, cached === undefined).value, ...reading } }
+    } catch (error: unknown) {
+      return this.refuseFile(request, { ok: false, code: 'synthesis-failed', detail: String(error) })
+    }
+  }
+
+  private async readFileSource(
+    sessionId: string,
+    path: string,
+    signal: AbortSignal,
+  ): Promise<{ text: string; truncated: boolean }> {
+    const files = this.ctx.get('workspaceFiles') as WorkspaceFilesReader | undefined
+    if (files === undefined) throw new FileRefusal('file-read-unavailable')
+    // The same header-only resolution the workspace file service's own lookup
+    // performs: a live Session, else the stored header, never an Agent start.
+    const live = this.ctx.sessions.get(sessionId)?.header as { cwd?: string } | undefined
+    const persistence = this.ctx.get('sessionPersistence') as
+      { stat(id: string): Promise<{ header: { cwd?: string } } | undefined> } | undefined
+    const header = live ?? (await persistence?.stat(sessionId))?.header
+    if (header === undefined) throw new FileRefusal('session-not-found')
+    const workspaceRoot = header.cwd
+      ?? (this.ctx.get('sandboxPolicy') as { workspaceRoot: string } | undefined)?.workspaceRoot
+    if (workspaceRoot === undefined) throw new FileRefusal('file-read-unavailable')
+    let text = ''
+    let offset = 1
+    for (;;) {
+      const page = await files.read({ sessionId, workspaceRoot }, path, { offset }, signal)
+      if (page.lines > 0) text += `${offset === 1 ? '' : '\n'}${page.text}`
+      if (text.length > this.fileMaxChars) return { text: text.slice(0, this.fileMaxChars), truncated: true }
+      if (page.eof || page.lines === 0) return { text, truncated: false }
+      offset += page.lines
+    }
+  }
+
+  private refuseFile(request: SpeechFileAudioRequest, failure: SpeechFileAudioFailure): SpeechFileAudioFailure {
+    const detail = failure.detail === undefined ? '' : `: ${failure.detail}`
+    this.ctx.logger.warn(
+      `read-aloud: audio for part ${request.index} of file ${request.path} in session ${request.sessionId}`
+      + ` refused (${failure.code})${detail}`,
+    )
+    return failure
+  }
+
   /**
    * Log a refused audio request and return it unchanged.
    *
@@ -191,9 +294,9 @@ export class ReadAloudService extends Service {
   }
 
   /**
-   * Synthesize and cache one message's audio, joining any in-flight call for
-   * the same message so a turn-end job and a playback request never bill twice.
-   * @param messageId - the message the audio belongs to.
+   * Synthesize and cache one reading's audio, joining any in-flight call for
+   * the same key so a turn-end job and a playback request never bill twice.
+   * @param messageId - the cache key: a message id, or a file part's content key.
    * @param text - the prose to speak.
    * @returns the synthesized audio bytes.
    */

@@ -1,15 +1,18 @@
 /**
- * `@dsh-external/dsh-read-aloud`: read-aloud of assistant replies as one
- * installable bundle.
+ * `@dsh-external/dsh-read-aloud`: read-aloud of assistant replies and of
+ * Markdown and plain-text files as one installable bundle.
  *
  * Four Cordis roles ship together because they change together:
  * - `TtsRuntime` owns `ctx.tts`, the request/spec split, and provider selection.
  * - `OpenAiTtsProvider` registers one route per configured entry in that seam.
- * - `ReadAloudService` owns `ctx.readAloud`: the `turn/end` trigger and cache.
- * - the browser half plays it from the assistant-message action strip.
+ * - `ReadAloudService` owns `ctx.readAloud`: the `turn/end` trigger, the file
+ *   reader, and the cache.
+ * - the browser half plays it from the assistant-message action strip and the
+ *   document preview's header.
  *
  * Audio never enters the Session log: it is a regenerable cache keyed by
- * `messageId`, so replay and the Session format are untouched.
+ * `messageId` for a reply and by content for a file part, so replay and the
+ * Session format are untouched.
  * @module @dsh-external/dsh-read-aloud
  */
 import type { Context } from '@deepseek-ai/cordis';
@@ -19,7 +22,10 @@ export { OpenAiTtsProvider, OPENAI_DEFAULT_BASE_URL } from './provider.ts';
 export { ReadAloudService } from './service.ts';
 export { CHANNEL } from './rpc.ts';
 export type { SpeechAudio, SpeechProvider, SpeechRequest, SpeechSpec } from './tts-types.ts';
-export type { SpeechAudioRequest, SpeechAudioResult, SpeechAudioValue } from './cache-types.ts';
+export type { SpeechAudioRequest, SpeechAudioResult, SpeechAudioValue, SpeechFileAudioRequest, SpeechFileAudioResult, SpeechFileAudioValue, } from './cache-types.ts';
+export { speakableKind } from './speakable.ts';
+export type { SpeakableKind } from './speakable.ts';
+export { speakableText, splitSegments } from './speech-text.ts';
 /** Cordis plugin name used by loader diagnostics. */
 export declare const name = "read-aloud";
 /** Services this bundle needs from the Host. */
@@ -55,6 +61,8 @@ export interface Config {
     ttlDays: number;
     /** Synthesize every completed turn as it ends. */
     synthesizeOnTurnEnd: boolean;
+    fileMaxChars: number;
+    fileSegmentChars: number;
 }
 export declare const Config: z<Config>;
 /**

@@ -1,21 +1,26 @@
 /**
  * Read-aloud plugin, browser half: the play/stop entry in the
- * conversation.chat.assistant-actions strip. One SpeechPlayer per Session backs
- * every message control in that Session, so starting one reply stops whatever
- * was playing.
+ * conversation.chat.assistant-actions strip and the one in the document
+ * preview's header. One SpeechPlayer per Session backs every control in that
+ * Session, and starting a reading stops every other player, so only one
+ * reading is ever audible.
  *
  * Audio is fetched over the plugin's own RPC channel. The Host resolves the
- * spoken text from its own Session log, so this half sends message identity and
- * never prose.
+ * spoken text from its own Session log or reads the file itself, so this half
+ * sends message identity or a file path and never prose.
  * @module @dsh-external/dsh-read-aloud/client
  */
 
+import { FILE_KEY_PREFIX, FileSpeechAction } from './FileSpeechAction.tsx'
 import { MessageSpeechAction } from './MessageSpeechAction.tsx'
 import { SpeechPlayer } from './player.ts'
-import type { MessageSpeechInjected } from './slots.ts'
+import type { SpeechAudioPart } from './player.ts'
+import type { FileSpeechInjected, MessageSpeechInjected } from './slots.ts'
 import { en, zh } from './locales.ts'
 
-export type { MessageSpeechActionProps, MessageSpeechInjected } from './slots.ts'
+export type {
+  FileSpeechActionProps, FileSpeechInjected, MessageSpeechActionProps, MessageSpeechInjected,
+} from './slots.ts'
 export type { SpeechPlaybackStatus, SpeechPlaybackView } from './player.ts'
 export type { MessageSpeechKey } from './locales.ts'
 
@@ -34,7 +39,12 @@ interface AudioReply {
     readonly ok: boolean
     readonly code?: string
     readonly detail?: string
-    readonly value?: { readonly data: string; readonly mediaType: string }
+    readonly value?: {
+      readonly data: string
+      readonly mediaType: string
+      readonly count?: number
+      readonly truncated?: boolean
+    }
   }
 }
 
@@ -74,15 +84,27 @@ export function apply(ctx: any): void {
           ctx.connection.rpc.call(CHANNEL, 'playback-failed', { sessionId, messageId, stage, reason }),
         ).catch(() => {})
       }
-      player = new SpeechPlayer(async (messageId: string) => {
-        const reply: AudioReply = await ctx.connection.rpc.call(CHANNEL, 'audio', { sessionId, messageId })
+      player = new SpeechPlayer(async (key: string, index: number): Promise<SpeechAudioPart | undefined> => {
+        const file = key.startsWith(FILE_KEY_PREFIX)
+        const reply: AudioReply = file
+          ? await ctx.connection.rpc.call(CHANNEL, 'file-audio', { sessionId, path: key.slice(FILE_KEY_PREFIX.length), index })
+          : await ctx.connection.rpc.call(CHANNEL, 'audio', { sessionId, messageId: key })
+        // The file changed under a reading and no longer has this part.
+        if (file && reply.ok === true && reply.value?.ok === false && reply.value.code === 'segment-out-of-range') {
+          return undefined
+        }
         // Two envelopes: the channel's own ok, then the cache's audio result.
         // A refusal throws rather than resolving undefined, so the player's own
         // failure path carries the Host's reason instead of a generic message.
         if (reply.ok !== true || reply.value?.ok !== true || reply.value.value === undefined) {
           throw new Error(refusalOf(reply))
         }
-        return { data: reply.value.value.data, mediaType: reply.value.value.mediaType }
+        const { data, mediaType, count, truncated } = reply.value.value
+        return {
+          data, mediaType,
+          ...count === undefined ? {} : { count },
+          ...truncated === undefined ? {} : { truncated },
+        }
       }, report)
       players.set(sessionId, player)
     }
@@ -95,24 +117,39 @@ export function apply(ctx: any): void {
     for (const player of players.values()) player.stop()
   })
 
-  ctx.slots.inject('conversation.chat.assistant-actions', () => {
-    const dispose = ctx.slots.register({
-      name: 'conversation.chat.assistant-actions',
-      id: 'speech',
-      order: 20,
-      locale: NS,
-      inject: (sessionId: string): MessageSpeechInjected => {
-        const player = playerFor(sessionId)
-        return {
-          hooks: { speech: player },
-          toggle: (messageId: string) => { void player.toggle(messageId) },
-        }
-      },
-    }, MessageSpeechAction)
-    return () => {
-      dispose()
-      for (const player of players.values()) player.dispose()
-      players.clear()
+  // Players are per Session, so two Sessions could otherwise speak at once.
+  const toggle = (sessionId: string, key: string): void => {
+    const player = playerFor(sessionId)
+    for (const other of players.values()) {
+      if (other !== player) other.stop()
     }
-  })
+    void player.toggle(key)
+  }
+
+  ctx.effect(() => () => {
+    for (const player of players.values()) player.dispose()
+    players.clear()
+  }, 'read-aloud: players')
+
+  ctx.slots.inject('conversation.chat.assistant-actions', () => ctx.slots.register({
+    name: 'conversation.chat.assistant-actions',
+    id: 'speech',
+    order: 20,
+    locale: NS,
+    inject: (sessionId: string): MessageSpeechInjected => ({
+      hooks: { speech: playerFor(sessionId) },
+      toggle: (messageId: string) => { toggle(sessionId, messageId) },
+    }),
+  }, MessageSpeechAction))
+
+  ctx.slots.inject('sidebar.right.tab.document.actions', () => ctx.slots.register({
+    name: 'sidebar.right.tab.document.actions',
+    id: 'speech',
+    order: -10,
+    locale: NS,
+    inject: (sessionId: string): FileSpeechInjected => ({
+      hooks: { speech: playerFor(sessionId) },
+      toggle: (absolutePath: string) => { toggle(sessionId, `${FILE_KEY_PREFIX}${absolutePath}`) },
+    }),
+  }, FileSpeechAction))
 }

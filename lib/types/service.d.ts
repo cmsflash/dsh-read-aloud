@@ -12,7 +12,7 @@
  * @module @dsh-external/dsh-read-aloud/service
  */
 import { Context, Service } from '@deepseek-ai/cordis';
-import type { SpeechAudioRequest, SpeechAudioResult, SpeechPlaybackFailureReport } from './cache-types.ts';
+import type { SpeechAudioRequest, SpeechAudioResult, SpeechFileAudioRequest, SpeechFileAudioResult, SpeechPlaybackFailureReport } from './cache-types.ts';
 declare module '@deepseek-ai/cordis' {
     interface Context {
         readAloud: ReadAloudService;
@@ -27,6 +27,8 @@ export interface Config {
      * first playback request, trading latency for spend on turns nobody plays.
      */
     readonly synthesizeOnTurnEnd: boolean;
+    readonly fileMaxChars: number;
+    readonly fileSegmentChars: number;
 }
 /**
  * Cached read-aloud audio for finalized assistant messages.
@@ -39,7 +41,9 @@ export declare class ReadAloudService extends Service {
     static inject: string[];
     private readonly store;
     private readonly synthesizeOnTurnEnd;
-    /** In-flight synthesis per message, so a turn-end job and a play request share one call. */
+    private readonly fileMaxChars;
+    private readonly fileSegmentChars;
+    /** In-flight synthesis per cache key, so a turn-end job and a play request share one call. */
     private readonly inFlight;
     /**
      * @param ctx - Host context carrying the Session store and the tts seam.
@@ -69,6 +73,9 @@ export declare class ReadAloudService extends Service {
      * @returns base64 audio, or an explicit failure.
      */
     audio(request: SpeechAudioRequest): Promise<SpeechAudioResult>;
+    fileAudio(request: SpeechFileAudioRequest, signal: AbortSignal): Promise<SpeechFileAudioResult>;
+    private readFileSource;
+    private refuseFile;
     /**
      * Log a refused audio request and return it unchanged.
      *
@@ -95,9 +102,9 @@ export declare class ReadAloudService extends Service {
     private readSessionText;
     private synthesizeClosingMessage;
     /**
-     * Synthesize and cache one message's audio, joining any in-flight call for
-     * the same message so a turn-end job and a playback request never bill twice.
-     * @param messageId - the message the audio belongs to.
+     * Synthesize and cache one reading's audio, joining any in-flight call for
+     * the same key so a turn-end job and a playback request never bill twice.
+     * @param messageId - the cache key: a message id, or a file part's content key.
      * @param text - the prose to speak.
      * @returns the synthesized audio bytes.
      */

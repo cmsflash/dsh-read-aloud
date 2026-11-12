@@ -1,11 +1,10 @@
 /**
- * Browser-side audio playback for one Session's assistant messages. One player
- * per Session enforces the single-stream rule: starting a message stops
- * whatever was playing, so two replies never overlap.
+ * Browser-side audio playback for one Session. One player per Session enforces
+ * the single-stream rule: starting a reading stops whatever was playing. A
+ * reading is one or more parts played in order through one audio element; an
+ * assistant reply is a single part, a file is as many as the Host cut it into.
  * @module @dsh-external/dsh-read-aloud/client/player
  */
-
-import type { MessageId } from '@deepseek-ai/dsh-client-connection/client'
 
 /** Decode base64 audio into a blob URL the audio element can play. */
 function toObjectUrl(base64: string, mediaType: string): string {
@@ -15,27 +14,38 @@ function toObjectUrl(base64: string, mediaType: string): string {
   return URL.createObjectURL(new Blob([bytes], { type: mediaType }))
 }
 
-/** What a caller observes about one message's playback. */
+/** What a caller observes about one reading's playback. */
 export type SpeechPlaybackStatus = 'idle' | 'loading' | 'playing' | 'error'
 
-/** One Session's playback state, shared by every message control in it. */
+/** One Session's playback state, shared by every control in it. */
 export interface SpeechPlaybackView {
-  /** The message currently loading or playing, when any. */
-  readonly activeMessageId: MessageId | undefined
+  /** Key of the reading currently loading or playing: a message id, or `file:<absolute path>`. */
+  readonly activeMessageId: string | undefined
   /** Status of {@link SpeechPlaybackView.activeMessageId}. */
   readonly status: SpeechPlaybackStatus
+  readonly truncated: boolean
 }
 
-/** Fetches one message's audio; resolves `undefined` when it cannot be produced. */
-export type SpeechAudioLoader = (messageId: MessageId) => Promise<{ data: string; mediaType: string } | undefined>
+export interface SpeechAudioPart {
+  readonly data: string
+  readonly mediaType: string
+  readonly count?: number
+  readonly truncated?: boolean
+}
+
+/**
+ * Fetches one part of a reading. Resolves `undefined` when the reading has no
+ * such part (its source shrank since the last request); rejects on any failure.
+ */
+export type SpeechAudioLoader = (key: string, index: number) => Promise<SpeechAudioPart | undefined>
 
 /** Browser-side step that failed; mirrors the Host's `SpeechPlaybackStage`. */
 export type SpeechFailureStage = 'request' | 'decode' | 'play'
 
 /** Reports one playback failure for logging; never rejects. */
-export type SpeechFailureReporter = (messageId: MessageId, stage: SpeechFailureStage, reason: string) => void
+export type SpeechFailureReporter = (key: string, stage: SpeechFailureStage, reason: string) => void
 
-const IDLE: SpeechPlaybackView = Object.freeze({ activeMessageId: undefined, status: 'idle' })
+const IDLE: SpeechPlaybackView = Object.freeze({ activeMessageId: undefined, status: 'idle', truncated: false })
 
 /**
  * Per-Session playback controller.
@@ -44,21 +54,25 @@ const IDLE: SpeechPlaybackView = Object.freeze({ activeMessageId: undefined, sta
  * re-renders only when playback actually moves.
  */
 export class SpeechPlayer {
+  private readonly load: SpeechAudioLoader
+  private readonly report: SpeechFailureReporter
   private view: SpeechPlaybackView = IDLE
   private readonly listeners = new Set<() => void>()
   private audio: HTMLAudioElement | undefined
   private objectUrl: string | undefined
-  /** Distinguishes a settled load from one superseded by a later request. */
+  /** Distinguishes the current reading from one superseded by a later request. */
   private generation = 0
+  private settle: ((outcome: 'stopped') => void) | undefined
+  private readonly resumeAt = new Map<string, number>()
 
   /**
-   * @param load - fetches one message's audio.
+   * @param load - fetches one part of a reading.
    * @param report - records a failure for the Host log.
    */
-  constructor(
-    private readonly load: SpeechAudioLoader,
-    private readonly report: SpeechFailureReporter,
-  ) {}
+  constructor(load: SpeechAudioLoader, report: SpeechFailureReporter) {
+    this.load = load
+    this.report = report
+  }
 
   /**
    * Subscribe to playback changes.
@@ -77,51 +91,84 @@ export class SpeechPlayer {
   getSnapshot = (): SpeechPlaybackView => this.view
 
   /**
-   * Start reading one message aloud, or stop it when it is already active.
-   * @param messageId - the message to read.
+   * Start one reading, or stop it when it is already active. A multi-part
+   * reading stopped midway starts again at the part it was playing.
+   * @param key - the reading: a message id, or `file:<absolute path>`.
+   * @returns once the reading ended, failed, or was superseded.
    */
-  async toggle(messageId: MessageId): Promise<void> {
-    if (this.view.activeMessageId === messageId && this.view.status !== 'error') {
+  async toggle(key: string): Promise<void> {
+    if (this.view.activeMessageId === key && this.view.status !== 'error') {
       this.stop()
       return
     }
     this.stop()
     const generation = ++this.generation
-    this.publish({ activeMessageId: messageId, status: 'loading' })
-    const audio = await this.load(messageId).catch((error: unknown) => {
-      this.report(messageId, 'request', String(error))
-      return undefined
-    })
-    if (generation !== this.generation) return
-    if (audio === undefined) {
-      this.fail(messageId, 'request', 'the host produced no audio for this message')
-      return
-    }
-    try {
-      this.objectUrl = toObjectUrl(audio.data, audio.mediaType)
-    } catch (error: unknown) {
-      this.fail(messageId, 'decode', String(error))
-      return
-    }
-    const element = new Audio(this.objectUrl)
+    // One element plays every part: an element that has played once may play
+    // again without a new user gesture, which a fresh element per part may not.
+    const element = new Audio()
     this.audio = element
-    element.addEventListener('ended', () => {
-      if (generation === this.generation) this.stop()
-    })
-    element.addEventListener('error', () => {
+    this.publish({ activeMessageId: key, status: 'loading', truncated: false })
+    let index = this.resumeAt.get(key) ?? 0
+    let pending = this.load(key, index)
+    for (;;) {
+      let part: SpeechAudioPart | undefined
+      try {
+        part = await pending
+      } catch (error: unknown) {
+        if (generation === this.generation) {
+          if (index > 0) this.resumeAt.set(key, index)
+          this.fail(key, 'request', String(error))
+        }
+        return
+      }
       if (generation !== this.generation) return
-      const error = element.error
-      this.fail(messageId, 'play', error === null ? 'media error' : `media error ${error.code}: ${error.message}`)
-    })
-    // HTMLMediaElement.play() predates promises; a host that returns nothing
-    // has already started playback synchronously.
-    /* v8 ignore next 4 -- the stale-generation arms need a play() promise still
-       pending when a later toggle supersedes it; the element-event guards above
-       cover the same supersession rule with a deterministic trigger. */
-    await Promise.resolve(element.play()).then(
-      () => { if (generation === this.generation) this.publish({ activeMessageId: messageId, status: 'playing' }) },
-      (error: unknown) => { if (generation === this.generation) this.fail(messageId, 'play', String(error)) },
-    )
+      if (part === undefined) {
+        this.resumeAt.delete(key)
+        if (index === 0) this.fail(key, 'request', 'the host produced no audio for this reading')
+        else this.stop()
+        return
+      }
+      const count = part.count ?? 1
+      this.releaseUrl()
+      try {
+        this.objectUrl = toObjectUrl(part.data, part.mediaType)
+      } catch (error: unknown) {
+        this.fail(key, 'decode', String(error))
+        return
+      }
+      element.src = this.objectUrl
+      const outcome = new Promise<'ended' | 'error' | 'stopped'>((resolve) => {
+        this.settle = resolve
+        element.onended = () => { resolve('ended') }
+        element.onerror = () => { resolve('error') }
+      })
+      try {
+        // HTMLMediaElement.play() predates promises; a host that returns
+        // nothing has already started playback synchronously.
+        await Promise.resolve(element.play())
+      } catch (error: unknown) {
+        if (generation === this.generation) this.fail(key, 'play', String(error))
+        return
+      }
+      if (generation !== this.generation) return
+      if (count > 1) this.resumeAt.set(key, index)
+      this.publish({ activeMessageId: key, status: 'playing', truncated: part.truncated === true })
+      pending = index + 1 < count ? this.load(key, index + 1) : Promise.resolve(undefined)
+      pending.catch(() => {})
+      const result = await outcome
+      if (generation !== this.generation || result === 'stopped') return
+      if (result === 'error') {
+        const error = element.error
+        this.fail(key, 'play', error === null ? 'media error' : `media error ${error.code}: ${error.message}`)
+        return
+      }
+      index += 1
+      if (index >= count) {
+        this.resumeAt.delete(key)
+        this.stop()
+        return
+      }
+    }
   }
 
   /**
@@ -130,24 +177,19 @@ export class SpeechPlayer {
    * Every failing arm goes through here so the reader's generic tooltip and
    * the Host log can never disagree about whether playback failed.
    *
-   * @param messageId - the message that failed.
+   * @param key - the reading that failed.
    * @param stage - which step failed.
    * @param reason - the failure text.
    */
-  private fail(messageId: MessageId, stage: SpeechFailureStage, reason: string): void {
-    this.report(messageId, stage, reason)
-    this.publish({ activeMessageId: messageId, status: 'error' })
+  private fail(key: string, stage: SpeechFailureStage, reason: string): void {
+    this.report(key, stage, reason)
+    this.release()
+    this.publish({ activeMessageId: key, status: 'error', truncated: false })
   }
 
   /** Stop any active playback and release its resources. */
   stop(): void {
-    this.generation += 1
-    this.audio?.pause()
-    this.audio = undefined
-    if (this.objectUrl !== undefined) {
-      URL.revokeObjectURL(this.objectUrl)
-      this.objectUrl = undefined
-    }
+    this.release()
     this.publish(IDLE)
   }
 
@@ -155,10 +197,31 @@ export class SpeechPlayer {
   dispose(): void {
     this.stop()
     this.listeners.clear()
+    this.resumeAt.clear()
+  }
+
+  private release(): void {
+    this.generation += 1
+    this.settle?.('stopped')
+    this.settle = undefined
+    if (this.audio !== undefined) {
+      this.audio.onended = null
+      this.audio.onerror = null
+      this.audio.pause()
+      this.audio = undefined
+    }
+    this.releaseUrl()
+  }
+
+  private releaseUrl(): void {
+    if (this.objectUrl === undefined) return
+    URL.revokeObjectURL(this.objectUrl)
+    this.objectUrl = undefined
   }
 
   private publish(view: SpeechPlaybackView): void {
-    if (view.activeMessageId === this.view.activeMessageId && view.status === this.view.status) return
+    if (view.activeMessageId === this.view.activeMessageId && view.status === this.view.status
+      && view.truncated === this.view.truncated) return
     this.view = Object.freeze(view)
     for (const listener of this.listeners) listener()
   }

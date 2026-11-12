@@ -39,7 +39,7 @@ async function setup(t, synthesizeOnTurnEnd = false) {
       return { data: Buffer.from(text), mediaType: 'audio/mpeg' }
     },
   })
-  await ctx.plugin(ReadAloudService, { ttlDays: 1, synthesizeOnTurnEnd })
+  await ctx.plugin(ReadAloudService, { ttlDays: 1, synthesizeOnTurnEnd, fileMaxChars: 100000, fileSegmentChars: 1500 })
   return { ctx, home, spoken }
 }
 

@@ -1,6 +1,6 @@
 # @dsh-external/dsh-read-aloud
 
-Read-aloud of assistant replies for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): each completed turn's closing prose is synthesized, cached, and played from a button in the assistant-message action strip.
+Read-aloud for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). Each completed turn's closing prose is synthesized, cached, and played from a button in the assistant-message action strip. A Markdown or plain-text file open in the document preview is read from a button in the preview's header, part by part and on demand.
 
 ## Install
 
@@ -28,8 +28,8 @@ One bundle row, four Cordis roles:
 |---|---|---|
 | `TtsRuntime` | `ctx.tts` | provider registry, selection, and the resolve-then-synthesize policy |
 | `OpenAiTtsProvider` | registers into `ctx.tts` | one synthesis route per configured entry |
-| `ReadAloudService` | `ctx.readAloud` | the `turn/end` trigger, the audio cache, and the RPC channel |
-| browser half | — | the play/stop control |
+| `ReadAloudService` | `ctx.readAloud` | the `turn/end` trigger, the file reader, the audio cache, and the RPC channel |
+| browser half | — | the play/stop controls on assistant messages and in the document preview header |
 
 They ship together because they change together: a voice or model change touches the seam, the route, and the control at once.
 
@@ -45,6 +45,8 @@ They ship together because they change together: a voice or model change touches
 | `providers` | Map of route id to `{ apiKey, apiKeyEnv, baseURL, baseURLEnv, timeoutMs }`. |
 | `ttlDays` | Days a synthesized artifact is served before it is swept. |
 | `synthesizeOnTurnEnd` | Synthesize every completed turn as it ends. `false` defers synthesis to first playback, trading latency for spend on turns nobody plays. |
+| `fileMaxChars` | Characters of a file's source that are read aloud (default 100000). A longer file is cut there, and the stop tooltip says so. |
+| `fileSegmentChars` | Largest part of a file sent in one synthesis request (default 1500). Smaller parts start playing sooner. May not exceed `maxChars`; a larger value fails at load. |
 
 `model`, `voice`, and `provider` move together: a `minimax/*` model resolves only through a gateway route, so pinning the provider is correctness rather than tie-breaking.
 
@@ -54,9 +56,11 @@ The bundled patch reads the `litellm` route's key from `LITELLM_API_KEY` and its
 
 Always-on synthesis bills every completed turn whether or not anyone presses play. Vendors bill by input characters, so `bitrate` is a storage lever and not a spend lever. Set `synthesizeOnTurnEnd: false` to pay only for what is played.
 
+A file is never synthesized ahead of time. Pressing play synthesizes the first part, and each later part is requested while the one before it plays, so a reading stopped early bills only the parts reached plus one. A file read to the end bills its cleaned text once, at most `fileMaxChars` characters; parts already in the cache bill nothing.
+
 ## Storage
 
-Audio is a regenerable cache under `$DSH_HOME/cache/read-aloud/`, keyed by `messageId` and swept by age at startup. Nothing is appended to the Session log, so the Session format and replay are untouched and a cache miss simply synthesizes again.
+Audio is a regenerable cache under `$DSH_HOME/cache/read-aloud/`, swept by age at startup. A reply is keyed by `messageId`. A file part is keyed by a hash of its text with the model, voice, and bitrate, not by path: an edited file re-synthesizes only the parts whose text changed, and identical text in another file reuses the audio. Nothing is appended to the Session log, so the Session format and replay are untouched and a cache miss simply synthesizes again.
 
 ## Transport
 
@@ -64,9 +68,17 @@ The browser sends message identity, never prose. The plugin requires `sessionQue
 
 The channel takes `trusted-host` authority, the same grant `/api` applies: every request still passes the browser-trust fence, so a deployment reached through a declared `trustedHosts` authority can play audio while an unlisted Host is refused. Loopback-only withheld nothing — `session.history` already returns the same prose to any caller passing that fence — and it left the control dead on every non-loopback client.
 
+## Files
+
+The control appears in the document preview's header for `.md`, `.markdown`, `.mdx`, `.txt`, and `.text` files, wherever the preview was opened from: a file link in a reply, a delivered file's card, the file tree. The browser sends the Session and the file's absolute path with a part index; the Host reads the file through the Harness's `workspaceFiles` service, so the channel reads nothing that service does not already serve to the same client, and it refuses other extensions and relative paths before reading.
+
+Markdown is cleaned before synthesis: frontmatter, fenced code, block math, HTML comments and tags, rules, link targets, and bare URLs are dropped; headings, list items, and table rows are each spoken as one sentence. Plain text is spoken as written. The cleaned text is cut into parts at paragraph and sentence ends.
+
+A reading stopped midway resumes at the part it was playing, and starts over once it has finished. Playback continues when the preview tab is closed; open the file again or start any other reading to stop it. Starting any reading stops every other one, in every Session.
+
 ## Diagnosing a failed playback
 
-Every failure that reaches the reader as "Could not play audio" is logged by the Host as one `read-aloud:` warning naming the message, the Session, and the reason. Refusals (`session-not-found`, `session-read-failed`, `message-not-found`, `synthesis-failed`) are logged where they are produced; failures that only the browser can observe — the channel call, base64 decoding, and `HTMLMediaElement` playback — are reported back over the same RPC channel and logged as `failed at <stage>`.
+Every failure that reaches the reader as "Could not play audio" is logged by the Host as one `read-aloud:` warning naming the message, the Session, and the reason. Refusals (`session-not-found`, `session-read-failed`, `message-not-found`, `synthesis-failed`, and for files `file-unsupported`, `file-not-found`, `file-not-text`, `file-too-large`, `file-empty`, `file-read-unavailable`, `file-read-failed`) are logged where they are produced; failures that only the browser can observe — the channel call, base64 decoding, and `HTMLMediaElement` playback — are reported back over the same RPC channel and logged as `failed at <stage>`.
 
 A failure the browser reports is only as reachable as the channel carrying it: when the fence refuses the client, it refuses `playback-failed` too, so the reason never arrives. A client that fails every playback while logging nothing is that case, and the Host is the wrong place to look — read the browser console instead.
 
@@ -87,6 +99,10 @@ Those warnings need an exporter that accepts level 2. Cordis drops `logger.warn`
 - **Voice and model identifiers are unvalidated and vendor-specific.** A voice valid on one route may be rejected by another, and the failure surfaces only at synthesis.
 - **No usage passthrough.** The OpenAI-shaped reply is audio bytes with no usage envelope, so billed characters and duration are unavailable even when the vendor tracks them.
 - **Failures are warnings, not errors.** Both the `turn/end` job and a refused or failed playback report through `ctx.logger.warn` and stop there; to anyone not reading the log, a broken route shows up as a play button that does nothing.
+- **Only Markdown and plain text are read.** HTML, PDF, office documents, and source code get no control.
+- **A file reading has no seek and no visible position.** Stopping and starting again resumes at the start of the current part, about a minute and a half of audio at the default part size.
+- **Nothing shows what is playing once the preview is closed.** The audio continues until it ends or another reading starts.
+- **Replies are still spoken as written.** Markdown cleaning applies to files only.
 - **The reader is told nothing beyond "Could not play audio".** The failure reason reaches the log, not the tooltip, so a reader cannot distinguish a dead speech route from a message the Host could not resolve.
 
 ## Failure containment

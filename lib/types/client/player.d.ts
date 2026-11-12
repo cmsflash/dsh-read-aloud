@@ -1,28 +1,35 @@
 /**
- * Browser-side audio playback for one Session's assistant messages. One player
- * per Session enforces the single-stream rule: starting a message stops
- * whatever was playing, so two replies never overlap.
+ * Browser-side audio playback for one Session. One player per Session enforces
+ * the single-stream rule: starting a reading stops whatever was playing. A
+ * reading is one or more parts played in order through one audio element; an
+ * assistant reply is a single part, a file is as many as the Host cut it into.
  * @module @dsh-external/dsh-read-aloud/client/player
  */
-import type { MessageId } from '@deepseek-ai/dsh-client-connection/client';
-/** What a caller observes about one message's playback. */
+/** What a caller observes about one reading's playback. */
 export type SpeechPlaybackStatus = 'idle' | 'loading' | 'playing' | 'error';
-/** One Session's playback state, shared by every message control in it. */
+/** One Session's playback state, shared by every control in it. */
 export interface SpeechPlaybackView {
-    /** The message currently loading or playing, when any. */
-    readonly activeMessageId: MessageId | undefined;
+    /** Key of the reading currently loading or playing: a message id, or `file:<absolute path>`. */
+    readonly activeMessageId: string | undefined;
     /** Status of {@link SpeechPlaybackView.activeMessageId}. */
     readonly status: SpeechPlaybackStatus;
+    readonly truncated: boolean;
 }
-/** Fetches one message's audio; resolves `undefined` when it cannot be produced. */
-export type SpeechAudioLoader = (messageId: MessageId) => Promise<{
-    data: string;
-    mediaType: string;
-} | undefined>;
+export interface SpeechAudioPart {
+    readonly data: string;
+    readonly mediaType: string;
+    readonly count?: number;
+    readonly truncated?: boolean;
+}
+/**
+ * Fetches one part of a reading. Resolves `undefined` when the reading has no
+ * such part (its source shrank since the last request); rejects on any failure.
+ */
+export type SpeechAudioLoader = (key: string, index: number) => Promise<SpeechAudioPart | undefined>;
 /** Browser-side step that failed; mirrors the Host's `SpeechPlaybackStage`. */
 export type SpeechFailureStage = 'request' | 'decode' | 'play';
 /** Reports one playback failure for logging; never rejects. */
-export type SpeechFailureReporter = (messageId: MessageId, stage: SpeechFailureStage, reason: string) => void;
+export type SpeechFailureReporter = (key: string, stage: SpeechFailureStage, reason: string) => void;
 /**
  * Per-Session playback controller.
  *
@@ -36,10 +43,12 @@ export declare class SpeechPlayer {
     private readonly listeners;
     private audio;
     private objectUrl;
-    /** Distinguishes a settled load from one superseded by a later request. */
+    /** Distinguishes the current reading from one superseded by a later request. */
     private generation;
+    private settle;
+    private readonly resumeAt;
     /**
-     * @param load - fetches one message's audio.
+     * @param load - fetches one part of a reading.
      * @param report - records a failure for the Host log.
      */
     constructor(load: SpeechAudioLoader, report: SpeechFailureReporter);
@@ -55,17 +64,19 @@ export declare class SpeechPlayer {
      */
     getSnapshot: () => SpeechPlaybackView;
     /**
-     * Start reading one message aloud, or stop it when it is already active.
-     * @param messageId - the message to read.
+     * Start one reading, or stop it when it is already active. A multi-part
+     * reading stopped midway starts again at the part it was playing.
+     * @param key - the reading: a message id, or `file:<absolute path>`.
+     * @returns once the reading ended, failed, or was superseded.
      */
-    toggle(messageId: MessageId): Promise<void>;
+    toggle(key: string): Promise<void>;
     /**
      * Publish the error state and report why it happened.
      *
      * Every failing arm goes through here so the reader's generic tooltip and
      * the Host log can never disagree about whether playback failed.
      *
-     * @param messageId - the message that failed.
+     * @param key - the reading that failed.
      * @param stage - which step failed.
      * @param reason - the failure text.
      */
@@ -74,5 +85,7 @@ export declare class SpeechPlayer {
     stop(): void;
     /** Release every resource; the player is unusable afterwards. */
     dispose(): void;
+    private release;
+    private releaseUrl;
     private publish;
 }

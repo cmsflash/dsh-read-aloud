@@ -5,12 +5,14 @@ export declare const zh: {
     'action.stop': string;
     'action.loading': string;
     'error.generic': string;
+    'file.play': string;
+    'file.stopTruncated': string;
 };
 /** The speech namespace key union. */
 export type MessageSpeechKey = keyof typeof zh;
 declare module '@deepseek-ai/dsh-client-ui-slots' {
     interface LocaleNamespaceMap {
-        /** The per-message read-aloud control's copy. */
+        /** The read-aloud controls' copy. */
         speech: MessageSpeechKey;
     }
 }
@@ -20,4 +22,6 @@ export declare const en: {
     'action.stop': string;
     'action.loading': string;
     'error.generic': string;
+    'file.play': string;
+    'file.stopTruncated': string;
 };

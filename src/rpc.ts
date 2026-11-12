@@ -4,12 +4,14 @@
  * An external plugin cannot join `@deepseek-ai/dsh-api-remotes`, whose generated
  * Remote imports are a fixed in-repo list, so this channel replaces the Typert
  * Remote with a hand-validated JSON route. The endpoint set stays deliberately
- * narrow: identity in, audio out.
+ * narrow: identity in, audio out. A file is identity too: the Host reads it
+ * through its own workspace file service, so the browser sends a path and a
+ * part index, never text to speak.
  * @module @dsh-external/dsh-read-aloud/rpc
  */
 
 import type { ReadAloudService } from './service.ts'
-import type { SpeechAudioResult, SpeechPlaybackStage } from './cache-types.ts'
+import type { SpeechAudioResult, SpeechFileAudioResult, SpeechPlaybackStage } from './cache-types.ts'
 
 /** Channel the browser half calls; one route per plugin. */
 export const CHANNEL = '/dsh-read-aloud'
@@ -38,6 +40,13 @@ function record(value: unknown, label: string): Record<string, unknown> {
 function id(value: unknown, label: string): string {
   if (typeof value !== 'string' || value.trim() === '') {
     throw new Error(`${label} must be a non-empty string`)
+  }
+  return value
+}
+
+function partIndex(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error('index must be a non-negative integer')
   }
   return value
 }
@@ -83,6 +92,14 @@ export function registerReadAloudRpc(ctx: RpcContext, service: ReadAloudService)
         })
         // The browser unwraps one envelope, so the cache's own ok/code result
         // rides inside rather than being flattened into it.
+        return { ok: true, value: result }
+      }
+      case 'file-audio': {
+        const result: SpeechFileAudioResult = await service.fileAudio({
+          sessionId: id(payload.sessionId, 'sessionId'),
+          path: id(payload.path, 'path'),
+          index: partIndex(payload.index),
+        }, signal)
         return { ok: true, value: result }
       }
       case 'playback-failed': {

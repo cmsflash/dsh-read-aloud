@@ -41,7 +41,7 @@ test('skips delegated and interrupted turns, deduplicates synthesis, and removes
       return { data: Buffer.from('audio'), mediaType: 'audio/mpeg' }
     },
   })
-  const fiber = await ctx.plugin(ReadAloudService, { ttlDays: 1, synthesizeOnTurnEnd: true })
+  const fiber = await ctx.plugin(ReadAloudService, { ttlDays: 1, synthesizeOnTurnEnd: true, fileMaxChars: 100000, fileSegmentChars: 1500 })
   const queries = t.mock.method(ctx.sessionQuery, 'observeSession')
   const delegated = ctx.sessions.create('child', { meta: { parentSessionId: 'parent', delegationDepth: 1, cwd: tmpdir() } })
   delegated.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
